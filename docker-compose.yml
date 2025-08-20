@@ -1,0 +1,23 @@
+services:
+  claude-code-api:
+    # Use the public image from GitHub Container Registry
+    image: ghcr.io/${GITHUB_USERNAME}/claude-code-yolo:latest
+    container_name: claude-code-yolo
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      # REQUIRED - Your Anthropic API key
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      
+      # Security key for API endpoint (optional but recommended)
+      - CLAUDE_CODE_API_KEY=${CLAUDE_CODE_API_KEY:-changeme}
+      
+      # Git configuration (optional)
+      - GIT_USER_NAME=${GIT_USER_NAME:-Claude Bot}
+      - GIT_USER_EMAIL=${GIT_USER_EMAIL:-claude@example.com}
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+    volumes:
+      # Mount local directories for Claude to work with
+      - ./workspace:/workspace
+      - ./repos:/tmp/repos
