@@ -42,10 +42,8 @@ async function executeClaudeCode(task, codebasePath, context = '') {
     const args = [
       '-p', // Print mode for non-interactive execution
       '--output-format', 'json', // Get structured JSON output
-      '--allowedTools', 'Bash(*)', // Allow all bash commands
-      '--allowedTools', 'Write(*)', // Allow writing all files
-      '--allowedTools', 'Read(*)', // Allow reading all files
-      '--no-update-check', // Skip update checks
+      '--allowed-tools', 'Bash(*) Write(*) Read(*) Edit(*) MultiEdit(*) Grep(*) Glob(*) LS(*)', // Allow essential file operations
+      '--dangerously-skip-permissions', // Skip permission prompts for automation
       fullPrompt
     ];
     
