@@ -14,7 +14,7 @@ app.use(express.json({ limit: '10mb' }));
 const PORT = process.env.CLAUDE_CODE_API_PORT || 8080;
 const API_KEY = process.env.CLAUDE_CODE_API_KEY || 'your-secure-api-key-here';
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY; // Required for Claude Code
-const MAX_EXECUTION_TIME = 300000; // 5 minutes timeout
+const MAX_EXECUTION_TIME = 900000; // 15 minutes timeout
 
 // Middleware for API authentication
 const authenticate = (req, res, next) => {
@@ -50,6 +50,10 @@ async function executeClaudeCode(task, codebasePath, context = '') {
     console.log(`Executing Claude Code in: ${codebasePath}`);
     console.log(`Task: ${task}`);
     
+    // Log the full command for debugging
+    console.log(`Full command: ${command} ${args.join(' ')}`);
+    console.log(`Environment vars: ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY ? 'SET' : 'NOT SET'}`);
+    
     // Execute Claude Code
     const claudeProcess = spawn(command, args, {
       cwd: codebasePath,
@@ -58,16 +62,34 @@ async function executeClaudeCode(task, codebasePath, context = '') {
         ANTHROPIC_API_KEY: ANTHROPIC_API_KEY,
         CLAUDE_CODE_NON_INTERACTIVE: 'true',
         CLAUDE_CODE_AUTO_APPROVE: 'true'
-      }
+      },
+      timeout: MAX_EXECUTION_TIME
     });
     
     let output = '';
     let errorOutput = '';
     let jsonOutput = null;
+    let processStartTime = Date.now();
+    
+    // Set up a timeout handler
+    const timeoutHandler = setTimeout(() => {
+      console.error(`Process timeout after ${MAX_EXECUTION_TIME}ms - killing process`);
+      claudeProcess.kill('SIGTERM');
+      setTimeout(() => {
+        if (!claudeProcess.killed) {
+          console.error('Process did not terminate with SIGTERM, sending SIGKILL');
+          claudeProcess.kill('SIGKILL');
+        }
+      }, 5000);
+    }, MAX_EXECUTION_TIME);
     
     claudeProcess.stdout.on('data', (data) => {
       const chunk = data.toString();
       output += chunk;
+      
+      // Log with timestamp for debugging
+      const elapsed = Date.now() - processStartTime;
+      console.log(`[${elapsed}ms] Claude Output: ${chunk}`);
       
       // Try to parse JSON output
       try {
@@ -85,17 +107,18 @@ async function executeClaudeCode(task, codebasePath, context = '') {
       } catch (e) {
         // Continue collecting output
       }
-      
-      console.log(`Claude Output: ${chunk}`);
     });
     
     claudeProcess.stderr.on('data', (data) => {
+      const elapsed = Date.now() - processStartTime;
       errorOutput += data.toString();
-      console.error(`Claude Error: ${data}`);
+      console.error(`[${elapsed}ms] Claude Error: ${data}`);
     });
     
     claudeProcess.on('close', async (code) => {
-      console.log(`Claude Code process exited with code ${code}`);
+      clearTimeout(timeoutHandler);
+      const totalTime = Date.now() - processStartTime;
+      console.log(`Claude Code process exited with code ${code} after ${totalTime}ms`);
       
       if (code !== 0) {
         reject({
