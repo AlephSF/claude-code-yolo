@@ -97,19 +97,29 @@ async function executeClaudeCodeWithSDK(task, codebasePath, context = '') {
       console.log(`[${elapsed}ms] SDK Message:`, JSON.stringify(message, null, 2));
       
       if (message.type === "result") {
-        // Handle different result subtypes
-        if (message.subtype === "error_during_execution" && !message.is_error) {
+        console.log(`[${elapsed}ms] Processing result message with subtype: ${message.subtype}, is_error: ${message.is_error}`);
+        
+        // Handle all possible result scenarios
+        if (message.subtype === "success" && !message.is_error) {
+          // Normal successful completion
+          result = message.result || "Task completed successfully";
+        } else if (message.subtype === "error_during_execution" && !message.is_error) {
           // Task completed but with some execution issues (still successful)
-          result = "Task completed successfully (with minor execution details)";
-        } else if (message.result) {
-          result = message.result;
+          result = message.result || "Task completed successfully (with minor execution details)";
+        } else if (message.subtype === "error_max_turns") {
+          // Reached max turns but might have partial success
+          result = message.result || "Task partially completed (reached maximum turns)";
+        } else if (message.is_error) {
+          // Actual error condition
+          throw new Error(`Claude Code SDK error: ${message.subtype} - ${message.result || 'Unknown error'}`);
         } else {
-          // Fallback: consider it successful if we got a result message with costs
-          result = "Task completed successfully";
+          // Fallback for any other result type
+          result = message.result || "Task completed";
         }
         
         totalCost = message.total_cost_usd || 0;
         turns = message.num_turns || 1;
+        console.log(`[${elapsed}ms] Result extracted: "${result}", cost: $${totalCost}, turns: ${turns}`);
         break;
       } else if (message.type === "error") {
         throw new Error(`Claude Code SDK error: ${message.error}`);
@@ -117,6 +127,8 @@ async function executeClaudeCodeWithSDK(task, codebasePath, context = '') {
     }
     
     if (!result) {
+      console.error('ERROR: No result was extracted from SDK messages');
+      console.error('Final state:', { result, totalCost, turns });
       throw new Error('No result received from Claude Code SDK');
     }
     
