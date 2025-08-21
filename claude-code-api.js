@@ -165,7 +165,7 @@ app.get('/health', (req, res) => {
   res.json({
     status: 'healthy',
     timestamp: new Date().toISOString(),
-    version: '2.0.0-sdk',
+    version: '2.0.1-sdk',
     sdk: 'claude-code'
   });
 });
