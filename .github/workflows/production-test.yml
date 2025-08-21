@@ -15,7 +15,7 @@ on:
       run_expensive_tests:
         description: 'Run expensive API tests (costs ~$0.50)'
         required: false
-        default: 'false'
+        default: false
         type: boolean
 
 env:
@@ -89,7 +89,7 @@ jobs:
           docker rm test-container
       
       - name: Run production test suite
-        if: steps.check_key.outputs.has_key == 'true' && (github.event_name == 'push' || github.event.inputs.run_expensive_tests == 'true')
+        if: steps.check_key.outputs.has_key == 'true' && (github.event_name == 'push' || github.event.inputs.run_expensive_tests == true)
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
