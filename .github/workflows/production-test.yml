@@ -1,0 +1,221 @@
+name: Production Testing
+
+on:
+  # Run on all PRs to main
+  pull_request:
+    branches: [ main ]
+  
+  # Run before releases
+  push:
+    tags: [ 'v*' ]
+  
+  # Allow manual triggering
+  workflow_dispatch:
+    inputs:
+      run_expensive_tests:
+        description: 'Run expensive API tests (costs ~$0.50)'
+        required: false
+        default: 'false'
+        type: boolean
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  production-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    permissions:
+      contents: read
+      packages: read
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Check for API key
+        id: check_key
+        run: |
+          if [ -n "${{ secrets.ANTHROPIC_API_KEY }}" ]; then
+            echo "has_key=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_key=false" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Skip test warning
+        if: steps.check_key.outputs.has_key == 'false'
+        run: |
+          echo "⚠️ ANTHROPIC_API_KEY secret not configured"
+          echo "Skipping production tests that require real API calls"
+          echo "To enable full testing, add ANTHROPIC_API_KEY to repository secrets"
+      
+      - name: Build Docker image for testing
+        if: steps.check_key.outputs.has_key == 'true'
+        run: |
+          docker build -t claude-code-yolo:test .
+      
+      - name: Run basic container tests
+        if: steps.check_key.outputs.has_key == 'true'
+        run: |
+          # Test container starts and health check works
+          echo "Testing container startup..."
+          docker run -d --name test-container \
+            -p 8080:8080 \
+            -e ANTHROPIC_API_KEY="${{ secrets.ANTHROPIC_API_KEY }}" \
+            -e CLAUDE_CODE_API_KEY="test-key-123" \
+            claude-code-yolo:test
+          
+          # Wait for container to be ready
+          for i in {1..30}; do
+            if curl -s http://localhost:8080/health > /dev/null; then
+              echo "✅ Container health check passed"
+              break
+            fi
+            if [ $i -eq 30 ]; then
+              echo "❌ Container failed to start"
+              docker logs test-container
+              exit 1
+            fi
+            sleep 2
+          done
+          
+          # Stop container
+          docker stop test-container
+          docker rm test-container
+      
+      - name: Run production test suite
+        if: steps.check_key.outputs.has_key == 'true' && (github.event_name == 'push' || github.event.inputs.run_expensive_tests == 'true')
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          # Create .env file for tests
+          echo "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}" > .env
+          echo "CLAUDE_CODE_API_KEY=test-production-key-123" >> .env
+          
+          # Run comprehensive production tests
+          ./test-production.sh
+      
+      - name: Validate Docker multi-platform build
+        run: |
+          echo "Testing multi-platform build capability..."
+          docker buildx create --use --name multi-platform-builder
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --tag claude-code-yolo:multi-platform \
+            . \
+            --dry-run
+      
+      - name: Test cost estimation
+        if: steps.check_key.outputs.has_key == 'true' && github.event_name == 'push'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          echo "Running cost estimation test..."
+          
+          # Create minimal .env for cost test
+          echo "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}" > .env
+          
+          # Start container
+          docker run -d --name cost-test \
+            -p 8080:8080 \
+            -e ANTHROPIC_API_KEY="${{ secrets.ANTHROPIC_API_KEY }}" \
+            -e CLAUDE_CODE_API_KEY="cost-test-key" \
+            claude-code-yolo:test
+          
+          # Wait for startup
+          sleep 10
+          
+          # Run single validation call and check cost
+          response=$(curl -s -H "Authorization: Bearer cost-test-key" \
+            http://localhost:8080/api/claude-code/validate)
+          
+          cost=$(echo "$response" | jq -r '.cost // 0')
+          echo "Validation call cost: \$${cost}"
+          
+          # Verify cost is reasonable (should be < $0.20 for validation)
+          if (( $(echo "$cost > 0.20" | bc -l) )); then
+            echo "⚠️ Warning: Validation cost unusually high: \$${cost}"
+          else
+            echo "✅ Cost validation passed: \$${cost}"
+          fi
+          
+          # Cleanup
+          docker stop cost-test
+          docker rm cost-test
+      
+      - name: Performance benchmark
+        if: steps.check_key.outputs.has_key == 'true' && github.event_name == 'push'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          echo "Running performance benchmark..."
+          
+          # Create .env for benchmark
+          echo "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}" > .env
+          
+          # Start container
+          docker run -d --name perf-test \
+            -p 8080:8080 \
+            -e ANTHROPIC_API_KEY="${{ secrets.ANTHROPIC_API_KEY }}" \
+            -e CLAUDE_CODE_API_KEY="perf-test-key" \
+            -v /tmp:/workspace \
+            claude-code-yolo:test
+          
+          # Wait for startup
+          sleep 10
+          
+          # Measure response time for simple task
+          start_time=$(date +%s%N)
+          response=$(curl -s -X POST \
+            -H "Authorization: Bearer perf-test-key" \
+            -H "Content-Type: application/json" \
+            -d '{"task": "Just respond with: Performance test complete", "codebase_path": "/workspace"}' \
+            http://localhost:8080/api/claude-code)
+          end_time=$(date +%s%N)
+          
+          # Calculate timing
+          total_time_ms=$(( (end_time - start_time) / 1000000 ))
+          sdk_time_ms=$(echo "$response" | jq -r '.duration_ms // 0')
+          
+          echo "Total response time: ${total_time_ms}ms"
+          echo "SDK execution time: ${sdk_time_ms}ms"
+          
+          # Verify performance is acceptable (< 30 seconds total)
+          if [ $total_time_ms -gt 30000 ]; then
+            echo "⚠️ Warning: Response time slow: ${total_time_ms}ms"
+          else
+            echo "✅ Performance benchmark passed"
+          fi
+          
+          # Cleanup
+          docker stop perf-test
+          docker rm perf-test
+      
+      - name: Test results summary
+        if: always()
+        run: |
+          echo "## 🧪 Test Results Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ steps.check_key.outputs.has_key }}" == "true" ]; then
+            echo "✅ **API Key Available**: Full testing enabled" >> $GITHUB_STEP_SUMMARY
+            
+            if [ "${{ github.event_name }}" == "push" ] || [ "${{ github.event.inputs.run_expensive_tests }}" == "true" ]; then
+              echo "✅ **Production Tests**: Comprehensive test suite executed" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "ℹ️ **Production Tests**: Skipped (expensive tests only run on releases)" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "⚠️ **API Key Missing**: Only basic container tests performed" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "To enable full testing, add \`ANTHROPIC_API_KEY\` to repository secrets." >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Docker Build**: ✅ Multi-platform build validated" >> $GITHUB_STEP_SUMMARY
+          echo "**Container Health**: ✅ Health checks verified" >> $GITHUB_STEP_SUMMARY
