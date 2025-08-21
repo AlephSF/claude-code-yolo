@@ -1,7 +1,7 @@
 FROM node:20-slim
 
 LABEL org.opencontainers.image.source="https://github.com/alephsf/claude-code-yolo"
-LABEL org.opencontainers.image.description="Dockerized Claude Code for non-interactive cowbot coding tasks"
+LABEL org.opencontainers.image.description="Claude Code API wrapper using official SDK for automated coding tasks"
 LABEL org.opencontainers.image.licenses="MIT"
 
 # Install essential tools and dependencies
@@ -20,9 +20,6 @@ RUN apt-get update && apt-get install -y \
 RUN useradd -m -s /bin/bash claudeuser && \
     echo "claudeuser ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/claudeuser
 
-# Install Claude Code CLI globally
-RUN npm install -g @anthropic-ai/claude-code@latest
-
 # Set working directory
 WORKDIR /app
 
@@ -30,37 +27,14 @@ WORKDIR /app
 RUN mkdir -p /home/claudeuser/.claude /workspace /tmp/repos && \
     chown -R claudeuser:claudeuser /home/claudeuser /workspace /tmp/repos /app
 
-# Create package.json for the API wrapper
-RUN echo '{\n\
-  "name": "claude-code-api",\n\
-  "version": "1.0.0",\n\
-  "description": "API wrapper for Claude Code CLI",\n\
-  "main": "claude-code-api.js",\n\
-  "scripts": {\n\
-    "start": "node claude-code-api.js"\n\
-  },\n\
-  "dependencies": {\n\
-    "express": "^4.18.2"\n\
-  }\n\
-}' > package.json
+# Copy package.json first for better caching
+COPY --chown=claudeuser:claudeuser package.json ./
 
-# Install Node.js dependencies
+# Install Node.js dependencies (including Claude Code SDK)
 RUN npm install && chown -R claudeuser:claudeuser /app
 
 # Copy application files
 COPY --chown=claudeuser:claudeuser claude-code-api.js ./
-
-# Create a default settings file for Claude Code
-RUN echo '{\n\
-  "permissions": {\n\
-    "allow": ["*"]\n\
-  },\n\
-  "env": {\n\
-    "CLAUDE_CODE_NON_INTERACTIVE": "true",\n\
-    "CLAUDE_CODE_AUTO_APPROVE": "true"\n\
-  }\n\
-}' > /home/claudeuser/.claude/settings.json && \
-chown claudeuser:claudeuser /home/claudeuser/.claude/settings.json
 
 # Create entrypoint script
 RUN echo '#!/bin/bash\n\

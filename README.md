@@ -1,147 +1,151 @@
-# claude-code-yolo
+# Claude Code API
 
-A simple Docker container that runs Claude Code as an API service. Execute AI-powered coding tasks programmatically via REST API.
+A production-ready REST API wrapper for Anthropic's Claude Code, built with the official SDK. Execute AI-powered coding tasks programmatically with enterprise-grade reliability and performance.
 
-## What is this?
+## 🚀 Features
 
-This wraps Anthropic's Claude Code CLI tool in a simple Express-based HTTP API, making it easy to:
-- Automate coding tasks
-- Integrate with CI/CD pipelines  
-- Build custom automation workflows
-- Use with any tool that can make HTTP requests (n8n, Zapier, GitHub Actions, etc.)
+- **Official SDK Integration**: Uses `@anthropic-ai/claude-code` for maximum reliability
+- **REST API**: Simple HTTP endpoints for automation and integration
+- **Docker Ready**: Multi-platform containers with health checks
+- **Cost Tracking**: Built-in API usage and cost monitoring
+- **Git Integration**: Automatic change tracking and diff reporting
+- **Session Management**: Multi-turn conversations with context preservation
+- **Production Grade**: Proper error handling, logging, and graceful shutdown
 
-## Quick Start
+## 🏃‍♂️ Quick Start
 
-### Option 1: Docker Run
+### Using Docker (Recommended)
 
 ```bash
 docker run -d \
+  --name claude-code-api \
   -p 8080:8080 \
   -e ANTHROPIC_API_KEY=your-anthropic-api-key \
   -e CLAUDE_CODE_API_KEY=your-secure-api-key \
   -v $(pwd):/workspace \
-  ghcr.io/YOUR_USERNAME/claude-code-yolo:latest
+  ghcr.io/alephsf/claude-code-yolo:latest
 ```
 
-### Option 2: Docker Compose
+### Using Docker Compose
 
-1. Create a `docker-compose.yml`:
-
-```yaml
-version: '3.8'
-
-services:
-  claude-code-api:
-    image: ghcr.io/YOUR_USERNAME/claude-code-yolo:latest
-    container_name: claude-code-yolo
-    ports:
-      - "8080:8080"
-    environment:
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - CLAUDE_CODE_API_KEY=${CLAUDE_CODE_API_KEY}
-    volumes:
-      - ./workspace:/workspace
-```
-
-2. Create `.env` file:
-
+1. Create `.env` file:
 ```env
 ANTHROPIC_API_KEY=sk-ant-api03-xxxxx
 CLAUDE_CODE_API_KEY=your-secure-api-key
 ```
 
-3. Run:
-
+2. Run:
 ```bash
 docker-compose up -d
 ```
 
-## API Usage
+## 📡 API Reference
 
 ### Health Check
-
 ```bash
 curl http://localhost:8080/health
 ```
 
-### Execute Claude Code Task
+**Response:**
+```json
+{
+  "status": "healthy",
+  "timestamp": "2025-08-21T04:30:30.009Z",
+  "version": "2.0.0-sdk",
+  "sdk": "claude-code"
+}
+```
 
+### Execute Coding Task
 ```bash
 curl -X POST http://localhost:8080/api/claude-code \
   -H "Authorization: Bearer your-secure-api-key" \
   -H "Content-Type: application/json" \
   -d '{
-    "task": "Refactor getLolCatPhotos to get more recent photos",
+    "task": "Add error handling to all functions in main.py",
     "codebase_path": "/workspace",
-    "context": "Add unit tests in jest"
+    "context": "Use try-catch blocks and log errors appropriately"
   }'
 ```
 
-### Validate Installation
-
-```bash
-curl http://localhost:8080/api/claude-code/validate \
-  -H "Authorization: Bearer your-secure-api-key"
-```
-
-## API Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/health` | GET | Health check |
-| `/api/claude-code` | POST | Execute a Claude Code task |
-| `/api/claude-code/validate` | GET | Validate Claude Code installation |
-| `/api/claude-code/test` | POST | Run a simple test task |
-
-## Request Body Format
-
-```json
-{
-  "task": "Your coding instruction here",
-  "codebase_path": "/workspace/your-project",
-  "context": "Optional additional context"
-}
-```
-
-## Response Format
-
+**Response:**
 ```json
 {
   "success": true,
-  "taskId": "abc123",
-  "summary": "Created the requested function with tests",
-  "changes": "Files modified: example.py, test_example.py",
-  "output": "Claude's execution output",
-  "executionTime": 5234
+  "result": "Added comprehensive error handling to 5 functions in main.py with proper logging and exception handling.",
+  "summary": "Task completed successfully in 3 turn(s)",
+  "cost": 0.051476,
+  "duration_ms": 11083,
+  "changes": {
+    "hasChanges": true,
+    "changedFiles": ["main.py", "utils.py"]
+  }
 }
 ```
 
-## Environment Variables
+### Validate Installation
+```bash
+curl -H "Authorization: Bearer your-api-key" \
+  http://localhost:8080/api/claude-code/validate
+```
+
+### Test Endpoint
+```bash
+curl -X POST \
+  -H "Authorization: Bearer your-api-key" \
+  http://localhost:8080/api/claude-code/test
+```
+
+## 🔧 Configuration
+
+### Environment Variables
 
 | Variable | Required | Description | Default |
 |----------|----------|-------------|---------|
-| `ANTHROPIC_API_KEY` | Yes | Your Anthropic API key | - |
-| `CLAUDE_CODE_API_KEY` | No | API authentication key | - |
-| `GITHUB_TOKEN` | No | GitHub personal access token for private repos | - |
-| `GIT_USER_NAME` | No | Git commit author name | Claude Bot |
-| `GIT_USER_EMAIL` | No | Git commit author email | claude@example.com |
+| `ANTHROPIC_API_KEY` | ✅ Yes | Your Anthropic API key | - |
+| `CLAUDE_CODE_API_KEY` | No | API authentication token | `your-secure-api-key-here` |
+| `CLAUDE_CODE_API_PORT` | No | Server port | `8080` |
+| `GIT_USER_NAME` | No | Git commit author name | - |
+| `GIT_USER_EMAIL` | No | Git commit author email | - |
+| `GITHUB_TOKEN` | No | GitHub token for private repos | - |
 
-## Examples
+### Request Format
 
-### Python Script Example
+```typescript
+{
+  "task": string,           // Required: The coding task to execute
+  "codebase_path": string, // Required: Path to your code (usually /workspace)
+  "context"?: string       // Optional: Additional context or instructions
+}
+```
 
+### Response Format
+
+```typescript
+{
+  "success": boolean,
+  "result": string,        // Claude's response about what was accomplished
+  "summary": string,       // Brief summary of the task completion
+  "cost": number,         // API cost in USD
+  "duration_ms": number,  // Execution time in milliseconds
+  "changes": {
+    "hasChanges": boolean,
+    "changedFiles": string[] // List of files that were modified
+  }
+}
+```
+
+## 📚 Integration Examples
+
+### Python
 ```python
 import requests
-import json
 
-API_URL = "http://localhost:8080/api/claude-code"
-API_KEY = "your-secure-api-key"
-
-def run_claude_task(task, path="/workspace"):
+def claude_code_task(task, path="/workspace"):
     response = requests.post(
-        API_URL,
+        "http://localhost:8080/api/claude-code",
         headers={
-            "Authorization": f"Bearer {API_KEY}",
+            "Authorization": "Bearer your-secure-api-key",
             "Content-Type": "application/json"
         },
         json={
@@ -151,85 +155,170 @@ def run_claude_task(task, path="/workspace"):
     )
     return response.json()
 
-# Example usage
-result = run_claude_task("Add error handling to all functions in main.py")
-print(f"Task completed: {result['summary']}")
+# Usage
+result = claude_code_task("Optimize database queries in models.py")
+print(f"✅ {result['summary']} (Cost: ${result['cost']:.4f})")
 ```
 
-### GitHub Actions Example
+### Node.js/TypeScript
+```typescript
+import axios from 'axios';
 
-```yaml
-- name: Run Claude Code
-  run: |
-    curl -X POST http://your-server:8080/api/claude-code \
-      -H "Authorization: Bearer ${{ secrets.CLAUDE_API_KEY }}" \
-      -H "Content-Type: application/json" \
-      -d '{
-        "task": "Update documentation for all public functions",
-        "codebase_path": "/workspace"
-      }'
-```
-
-### Node.js Example
-
-```javascript
-const axios = require('axios');
-
-async function runClaudeTask(task) {
-  const response = await axios.post('http://localhost:8080/api/claude-code', {
-    task: task,
-    codebase_path: '/workspace'
-  }, {
-    headers: {
-      'Authorization': 'Bearer your-secure-api-key',
-      'Content-Type': 'application/json'
-    }
-  });
-  
-  return response.data;
+interface ClaudeCodeResponse {
+  success: boolean;
+  result: string;
+  summary: string;
+  cost: number;
+  duration_ms: number;
+  changes: {
+    hasChanges: boolean;
+    changedFiles: string[];
+  };
 }
 
-// Usage
-runClaudeTask('Refactor this code to use async/await')
-  .then(result => console.log(result.summary));
+async function claudeCode(task: string, path = "/workspace"): Promise<ClaudeCodeResponse> {
+  const { data } = await axios.post<ClaudeCodeResponse>(
+    'http://localhost:8080/api/claude-code',
+    { task, codebase_path: path },
+    {
+      headers: {
+        'Authorization': 'Bearer your-secure-api-key',
+        'Content-Type': 'application/json'
+      }
+    }
+  );
+  return data;
+}
 ```
 
-## Security Notes
+### GitHub Actions
+```yaml
+name: Auto-improve Code
+on: [push]
 
-- Always use a strong `CLAUDE_CODE_API_KEY` in production
-- Keep your `ANTHROPIC_API_KEY` secret
-- Consider using HTTPS with a reverse proxy for production
-- The container needs access to the code directories you want to modify
-
-## Troubleshooting
-
-### Check logs
-```bash
-docker logs claude-code-yolo
+jobs:
+  claude-code:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Run Claude Code
+        run: |
+          curl -X POST http://your-server:8080/api/claude-code \
+            -H "Authorization: Bearer ${{ secrets.CLAUDE_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "task": "Review and optimize the code for performance",
+              "codebase_path": "/workspace"
+            }'
 ```
 
-### Test without API auth
+### Curl Examples
 ```bash
-docker exec claude-code-yolo claude --version
+# Simple task
+curl -X POST http://localhost:8080/api/claude-code \
+  -H "Authorization: Bearer your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{"task": "Add docstrings to all functions", "codebase_path": "/workspace"}'
+
+# Complex refactoring
+curl -X POST http://localhost:8080/api/claude-code \
+  -H "Authorization: Bearer your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "task": "Refactor the authentication system to use JWT tokens",
+    "codebase_path": "/workspace",
+    "context": "Keep backward compatibility and add comprehensive tests"
+  }'
 ```
 
-### Interactive shell
+## 🏗️ Architecture
+
+### Claude Code SDK Integration
+This API uses the official `@anthropic-ai/claude-code` SDK instead of CLI process spawning, providing:
+
+- **Reliability**: No process timeouts or hanging
+- **Performance**: Direct SDK calls are faster and more efficient
+- **Features**: Access to advanced SDK features like session management
+- **Monitoring**: Built-in cost tracking and usage analytics
+- **Error Handling**: Proper error types and structured responses
+
+### Container Architecture
+- **Base**: Node.js 20 on Debian Slim
+- **User**: Runs as non-root `claudeuser` for security
+- **Dependencies**: Git, curl, ripgrep, jq for Claude Code functionality
+- **Health Checks**: Built-in health monitoring every 30 seconds
+
+## 🔒 Security
+
+- **Authentication**: Bearer token authentication on all API endpoints
+- **Non-root**: Container runs as non-privileged user
+- **Secrets**: Environment variables for sensitive data
+- **Isolation**: File operations contained within mounted volumes
+- **Permissions**: Configurable permission handling for automation
+
+## 🐛 Troubleshooting
+
+### Check Container Status
 ```bash
-docker exec -it claude-code-yolo bash
+docker logs claude-code-api
+docker exec claude-code-api curl http://localhost:8080/health
 ```
 
-## Building from Source
+### Common Issues
+
+**"Unauthorized" errors:**
+- Verify `CLAUDE_CODE_API_KEY` is set correctly
+- Check Authorization header format: `Bearer your-api-key`
+
+**"ANTHROPIC_API_KEY required" errors:**
+- Ensure your Anthropic API key is valid and has sufficient credits
+- Check environment variable is passed to container
+
+**SDK errors:**
+- Verify your Anthropic API key has Claude Code access
+- Check the task format and codebase_path
+
+### Debug Mode
+```bash
+# Run with verbose logging
+docker run -it --rm \
+  -e ANTHROPIC_API_KEY=your-key \
+  -v $(pwd):/workspace \
+  claude-code-yolo:latest
+```
+
+## 🏁 Building from Source
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/claude-code-yolo
+git clone https://github.com/AlephSF/claude-code-yolo
 cd claude-code-yolo
 docker build -t claude-code-yolo .
+
+# Or for multi-platform
+docker buildx build --platform linux/amd64,linux/arm64 -t claude-code-yolo .
 ```
 
-## License
+## 📦 Available Images
 
-MIT
+- `ghcr.io/alephsf/claude-code-yolo:latest` - Latest stable release
+- `ghcr.io/alephsf/claude-code-yolo:main` - Main branch builds
+- `ghcr.io/alephsf/claude-code-yolo:v1.0.0` - Specific version tags
 
-## Credits
+Multi-platform support: `linux/amd64`, `linux/arm64`
 
-Built on top of [Anthropic's Claude Code](https://www.anthropic.com/claude-code)
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Test with Docker
+5. Submit a pull request
+
+## 📄 License
+
+MIT License - see LICENSE file for details
+
+## 🙏 Credits
+
+Built on [Anthropic's Claude Code SDK](https://docs.anthropic.com/en/docs/claude-code) with ❤️

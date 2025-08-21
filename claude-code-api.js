@@ -1,11 +1,7 @@
-// Express API wrapper for Claude Code CLI
-// This service handles programmatic execution of Claude Code
-
-const express = require('express');
-const { spawn } = require('child_process');
-const fs = require('fs').promises;
-const path = require('path');
-const crypto = require('crypto');
+import express from 'express';
+import { query } from '@anthropic-ai/claude-code';
+import { spawn } from 'child_process';
+import { promisify } from 'util';
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
@@ -13,8 +9,13 @@ app.use(express.json({ limit: '10mb' }));
 // Configuration
 const PORT = process.env.CLAUDE_CODE_API_PORT || 8080;
 const API_KEY = process.env.CLAUDE_CODE_API_KEY || 'your-secure-api-key-here';
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY; // Required for Claude Code
-const MAX_EXECUTION_TIME = 900000; // 15 minutes timeout
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+
+// Validate required environment variables
+if (!ANTHROPIC_API_KEY) {
+  console.error('ERROR: ANTHROPIC_API_KEY environment variable is required');
+  process.exit(1);
+}
 
 // Middleware for API authentication
 const authenticate = (req, res, next) => {
@@ -25,197 +26,129 @@ const authenticate = (req, res, next) => {
   next();
 };
 
-// Helper function to execute Claude Code
-async function executeClaudeCode(task, codebasePath, context = '') {
-  return new Promise((resolve, reject) => {
-    const taskId = crypto.randomBytes(8).toString('hex');
-    const startTime = Date.now();
+// Utility function to get git diff for changes tracking
+async function getGitDiff(codebasePath) {
+  return new Promise((resolve) => {
+    const gitProcess = spawn('git', ['diff', '--name-only'], { 
+      cwd: codebasePath,
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
     
-    // Build the complete prompt
+    let output = '';
+    gitProcess.stdout.on('data', (data) => {
+      output += data.toString();
+    });
+    
+    gitProcess.on('close', (code) => {
+      if (code === 0 && output.trim()) {
+        resolve({
+          hasChanges: true,
+          changedFiles: output.trim().split('\n').filter(f => f.trim())
+        });
+      } else {
+        resolve({
+          hasChanges: false,
+          changedFiles: []
+        });
+      }
+    });
+    
+    gitProcess.on('error', () => {
+      resolve({
+        hasChanges: false,
+        changedFiles: [],
+        error: 'Git not available'
+      });
+    });
+  });
+}
+
+// Main Claude Code execution function using SDK
+async function executeClaudeCodeWithSDK(task, codebasePath, context = '') {
+  console.log(`Executing Claude Code SDK in: ${codebasePath}`);
+  console.log(`Task: ${task}`);
+  
+  const startTime = Date.now();
+  
+  try {
+    // Prepare the full prompt
     let fullPrompt = task;
     if (context) {
       fullPrompt = `${task}\n\nAdditional context: ${context}`;
     }
     
-    // Claude Code command with print mode for non-interactive execution
-    const command = 'claude';
-    const args = [
-      '-p', // Print mode for non-interactive execution
-      '--output-format', 'json', // Get structured JSON output
-      '--dangerously-skip-permissions', // Skip permission prompts (safe with non-root user)
-      fullPrompt
-    ];
+    console.log(`Starting Claude Code SDK query...`);
     
-    console.log(`Executing Claude Code in: ${codebasePath}`);
-    console.log(`Task: ${task}`);
+    let result = null;
+    let totalCost = 0;
+    let turns = 0;
     
-    // Log the full command for debugging
-    console.log(`Full command: ${command} ${args.join(' ')}`);
-    console.log(`Environment vars: ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY ? 'SET' : 'NOT SET'}`);
-    
-    // Execute Claude Code
-    const claudeProcess = spawn(command, args, {
-      cwd: codebasePath,
-      env: {
-        ...process.env,
-        ANTHROPIC_API_KEY: ANTHROPIC_API_KEY,
-        CLAUDE_CODE_NON_INTERACTIVE: 'true',
-        CLAUDE_CODE_AUTO_APPROVE: 'true'
-      },
-      timeout: MAX_EXECUTION_TIME
-    });
-    
-    let output = '';
-    let errorOutput = '';
-    let jsonOutput = null;
-    let processStartTime = Date.now();
-    
-    // Set up a timeout handler
-    const timeoutHandler = setTimeout(() => {
-      console.error(`Process timeout after ${MAX_EXECUTION_TIME}ms - killing process`);
-      claudeProcess.kill('SIGTERM');
-      setTimeout(() => {
-        if (!claudeProcess.killed) {
-          console.error('Process did not terminate with SIGTERM, sending SIGKILL');
-          claudeProcess.kill('SIGKILL');
-        }
-      }, 5000);
-    }, MAX_EXECUTION_TIME);
-    
-    claudeProcess.stdout.on('data', (data) => {
-      const chunk = data.toString();
-      output += chunk;
-      
-      // Log with timestamp for debugging
-      const elapsed = Date.now() - processStartTime;
-      console.log(`[${elapsed}ms] Claude Output: ${chunk}`);
-      
-      // Try to parse JSON output
-      try {
-        // Claude Code outputs JSON when using --output-format json
-        const lines = chunk.split('\n').filter(line => line.trim());
-        for (const line of lines) {
-          if (line.startsWith('{')) {
-            try {
-              jsonOutput = JSON.parse(line);
-            } catch (e) {
-              // Not valid JSON yet, might be partial
-            }
-          }
-        }
-      } catch (e) {
-        // Continue collecting output
+    // Use the SDK query function with permission auto-approval
+    for await (const message of query({
+      prompt: fullPrompt,
+      options: {
+        systemPrompt: "You are a helpful coding assistant. Execute the requested task efficiently and provide clear feedback about what you accomplished.",
+        maxTurns: 5,
+        cwd: codebasePath,
+        permissionMode: 'acceptEdits' // Auto-approve file operations for automation
       }
-    });
-    
-    claudeProcess.stderr.on('data', (data) => {
-      const elapsed = Date.now() - processStartTime;
-      errorOutput += data.toString();
-      console.error(`[${elapsed}ms] Claude Error: ${data}`);
-    });
-    
-    claudeProcess.on('close', async (code) => {
-      clearTimeout(timeoutHandler);
-      const totalTime = Date.now() - processStartTime;
-      console.log(`Claude Code process exited with code ${code} after ${totalTime}ms`);
+    })) {
+      const elapsed = Date.now() - startTime;
+      console.log(`[${elapsed}ms] SDK Message:`, JSON.stringify(message, null, 2));
       
-      if (code !== 0) {
-        reject({
-          error: 'Claude Code execution failed',
-          code,
-          output,
-          errorOutput
-        });
-      } else {
-        // Get git diff to see what changed
-        const changes = await getGitDiff(codebasePath);
-        
-        // Extract summary from output or JSON
-        let summary = 'Task completed successfully';
-        if (jsonOutput && jsonOutput.message) {
-          summary = jsonOutput.message;
-        } else {
-          summary = extractSummaryFromOutput(output);
-        }
-        
-        resolve({
-          success: true,
-          taskId,
-          summary,
-          changes,
-          output: output.substring(0, 5000), // Limit output size
-          executionTime: Date.now() - startTime
-        });
-      }
-    });
-    
-    // Set timeout
-    setTimeout(() => {
-      claudeProcess.kill('SIGTERM');
-      reject({ error: 'Execution timeout exceeded' });
-    }, MAX_EXECUTION_TIME);
-  });
-}
-
-// Extract summary from Claude's text output
-function extractSummaryFromOutput(output) {
-  // Look for common patterns in Claude's responses
-  const lines = output.split('\n').filter(line => line.trim());
-  
-  // Try to find lines that look like summaries
-  const summaryPatterns = [
-    /^I've .+/i,
-    /^I have .+/i,
-    /^Successfully .+/i,
-    /^Completed .+/i,
-    /^Created .+/i,
-    /^Updated .+/i,
-    /^Fixed .+/i,
-    /^Added .+/i
-  ];
-  
-  for (const line of lines) {
-    for (const pattern of summaryPatterns) {
-      if (pattern.test(line)) {
-        return line;
+      if (message.type === "result") {
+        result = message.result;
+        totalCost = message.total_cost_usd || 0;
+        turns = message.num_turns || 1;
+        break;
+      } else if (message.type === "error") {
+        throw new Error(`Claude Code SDK error: ${message.error}`);
       }
     }
+    
+    if (!result) {
+      throw new Error('No result received from Claude Code SDK');
+    }
+    
+    // Get git diff to see what changed
+    const changes = await getGitDiff(codebasePath);
+    
+    const totalTime = Date.now() - startTime;
+    console.log(`Claude Code SDK completed successfully after ${totalTime}ms`);
+    
+    return {
+      success: true,
+      result: result,
+      summary: `Task completed successfully in ${turns} turn(s)`,
+      cost: totalCost,
+      duration_ms: totalTime,
+      changes: changes
+    };
+    
+  } catch (error) {
+    const totalTime = Date.now() - startTime;
+    console.error(`Claude Code SDK error after ${totalTime}ms:`, error.message);
+    
+    throw {
+      success: false,
+      error: 'Claude Code SDK execution failed',
+      details: error.message,
+      duration_ms: totalTime
+    };
   }
-  
-  // Return first non-empty line if no summary pattern found
-  return lines[0] || 'Task completed';
 }
 
-// Get git diff for the changes
-async function getGitDiff(codebasePath) {
-  return new Promise((resolve) => {
-    const { exec } = require('child_process');
-    exec('git diff --stat && git status --short', 
-      { cwd: codebasePath, maxBuffer: 1024 * 1024 }, 
-      (error, stdout, stderr) => {
-        if (error) {
-          console.error('Git diff error:', error);
-          resolve('Unable to get diff');
-        } else {
-          resolve(stdout || 'No changes detected');
-        }
-      }
-    );
-  });
-}
-
-// API Endpoints
-
-// Health check
+// Health check endpoint
 app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'healthy', 
-    service: 'claude-code-api',
-    version: '1.0.0'
+  res.json({
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    version: '2.0.0-sdk',
+    sdk: 'claude-code'
   });
 });
 
-// Execute Claude Code task
+// Main Claude Code execution endpoint
 app.post('/api/claude-code', authenticate, async (req, res) => {
   const { task, codebase_path, context } = req.body;
   
@@ -228,124 +161,103 @@ app.post('/api/claude-code', authenticate, async (req, res) => {
   console.log('Received request:', { task, codebase_path, context });
   
   try {
-    // Verify codebase path exists
-    await fs.access(codebase_path);
-    
-    // Ensure we're in a git repository
-    const gitDir = path.join(codebase_path, '.git');
-    try {
-      await fs.access(gitDir);
-    } catch (e) {
-      console.warn('Warning: Not a git repository, some features may not work');
-    }
-    
-    // Execute Claude Code
-    const result = await executeClaudeCode(task, codebase_path, context);
-    
+    const result = await executeClaudeCodeWithSDK(task, codebase_path, context);
     res.json(result);
   } catch (error) {
-    console.error('Error executing Claude Code:', error);
+    console.error('Error executing Claude Code SDK:', error);
     res.status(500).json({ 
-      error: error.message || 'Failed to execute Claude Code',
-      details: error
+      error: 'Failed to execute Claude Code SDK', 
+      details: error 
     });
   }
 });
 
-// Validate Claude Code installation
+// Validate Claude Code SDK installation
 app.get('/api/claude-code/validate', authenticate, async (req, res) => {
-  const { exec } = require('child_process');
-  
-  exec('claude --version', (error, stdout, stderr) => {
-    if (error) {
-      res.status(500).json({ 
-        error: 'Claude Code not installed or not in PATH',
-        details: stderr
-      });
-    } else {
-      // Also check for API key
-      const hasApiKey = !!process.env.ANTHROPIC_API_KEY;
-      
-      res.json({ 
-        installed: true, 
-        version: stdout.trim(),
-        apiKeyConfigured: hasApiKey,
-        workingDirectory: process.cwd()
-      });
-    }
-  });
-});
-
-// Test endpoint for simple tasks
-app.post('/api/claude-code/test', authenticate, async (req, res) => {
-  const testDir = `/tmp/test-${Date.now()}`;
-  
   try {
-    // Create a test directory
-    await fs.mkdir(testDir, { recursive: true });
+    console.log('Validating Claude Code SDK installation...');
     
-    // Create a simple test file
-    await fs.writeFile(
-      path.join(testDir, 'test.js'),
-      'console.log("Hello World");'
+    // Test a simple query
+    const testResult = await executeClaudeCodeWithSDK(
+      'Just respond with "SDK validation successful"',
+      process.cwd()
     );
     
-    // Run a simple Claude Code task
-    const result = await executeClaudeCode(
-      'Add a comment to test.js explaining what it does',
+    res.json({
+      status: 'valid',
+      message: 'Claude Code SDK is working correctly',
+      test_result: testResult.result,
+      cost: testResult.cost
+    });
+  } catch (error) {
+    console.error('SDK validation failed:', error);
+    res.status(500).json({
+      status: 'invalid',
+      error: 'Claude Code SDK validation failed',
+      details: error.details || error.message
+    });
+  }
+});
+
+// Test endpoint for SDK functionality
+app.post('/api/claude-code/test', authenticate, async (req, res) => {
+  try {
+    console.log('Running Claude Code SDK test...');
+    
+    // Create a temporary directory for testing
+    const testDir = '/tmp/claude-test-' + Date.now();
+    await new Promise((resolve, reject) => {
+      spawn('mkdir', ['-p', testDir]).on('close', (code) => {
+        code === 0 ? resolve() : reject(new Error('Failed to create test directory'));
+      });
+    });
+    
+    // Test creating a file
+    const testResult = await executeClaudeCodeWithSDK(
+      'Create a file called test.md with content: "# Claude Code SDK Test\n\nThis file was created by the Claude Code SDK to test the API wrapper."',
       testDir
     );
     
     // Clean up
-    await fs.rm(testDir, { recursive: true, force: true });
+    spawn('rm', ['-rf', testDir]);
     
     res.json({
-      success: true,
-      test: 'Claude Code is working correctly',
-      result
+      status: 'success',
+      message: 'Claude Code SDK test completed successfully',
+      test_directory: testDir,
+      result: testResult
     });
   } catch (error) {
-    // Clean up on error
-    try {
-      await fs.rm(testDir, { recursive: true, force: true });
-    } catch (e) {}
-    
+    console.error('SDK test failed:', error);
     res.status(500).json({
-      error: 'Test failed',
-      details: error.message
+      status: 'failed',
+      error: 'Claude Code SDK test failed',
+      details: error.details || error.message
     });
   }
 });
 
-// Start server
+// Start the server
 app.listen(PORT, () => {
   console.log(`Claude Code API server running on port ${PORT}`);
-  console.log(`API Key required: ${API_KEY ? 'Yes (configured)' : 'No (using default)'}`);
+  console.log(`API Key required: ${API_KEY !== 'your-secure-api-key-here' ? 'Yes (configured)' : 'Yes (using default - change for production)'}`);
   
-  // Validate Claude Code installation on startup
-  const { exec } = require('child_process');
-  
-  exec('claude --version', (error, stdout, stderr) => {
-    if (error) {
-      console.error('⚠️  WARNING: Claude Code not found in PATH');
-      console.error('Please ensure Claude Code is installed in the container');
-      console.error('Installation: npm install -g @anthropic-ai/claude-code');
-    } else {
-      console.log(`✅ Claude Code version: ${stdout.trim()}`);
-    }
-  });
-  
-  // Validate API key
-  if (!ANTHROPIC_API_KEY) {
-    console.error('⚠️  WARNING: ANTHROPIC_API_KEY environment variable not set');
-    console.error('Claude Code will not be able to authenticate with Anthropic');
-  } else {
+  if (ANTHROPIC_API_KEY) {
     console.log('✅ Anthropic API key configured');
+  } else {
+    console.log('❌ Anthropic API key not configured');
   }
+  
+  console.log('✅ Using Claude Code SDK instead of CLI spawn');
 });
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
-  console.log('Shutting down Claude Code API server...');
+  console.log('Received SIGTERM, shutting down gracefully');
+  process.exit(0);
+});
+
+process.on('SIGINT', () => {
+  console.log('Received SIGINT, shutting down gracefully');
   process.exit(0);
 });

@@ -1,23 +1,32 @@
+version: '3.8'
+
 services:
   claude-code-api:
-    # Use the public image from GitHub Container Registry
-    image: ghcr.io/${GITHUB_USERNAME}/claude-code-yolo:latest
-    container_name: claude-code-yolo
+    image: ghcr.io/alephsf/claude-code-yolo:latest
+    container_name: claude-code-api
     restart: unless-stopped
     ports:
       - "8080:8080"
     environment:
-      # REQUIRED - Your Anthropic API key
+      # REQUIRED - Your Anthropic API key for Claude Code SDK
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       
-      # Security key for API endpoint (optional but recommended)
-      - CLAUDE_CODE_API_KEY=${CLAUDE_CODE_API_KEY:-changeme}
+      # API authentication (recommended for security)
+      - CLAUDE_CODE_API_KEY=${CLAUDE_CODE_API_KEY:-your-secure-api-key-here}
       
-      # Git configuration (optional)
-      - GIT_USER_NAME=${GIT_USER_NAME:-Claude Bot}
-      - GIT_USER_EMAIL=${GIT_USER_EMAIL:-claude@example.com}
+      # Optional: Server port (default: 8080)
+      - CLAUDE_CODE_API_PORT=${CLAUDE_CODE_API_PORT:-8080}
+      
+      # Optional: Git configuration for commits
+      - GIT_USER_NAME=${GIT_USER_NAME}
+      - GIT_USER_EMAIL=${GIT_USER_EMAIL}
       - GITHUB_TOKEN=${GITHUB_TOKEN}
     volumes:
-      # Mount local directories for Claude to work with
-      - ./workspace:/workspace
-      - ./repos:/tmp/repos
+      # Mount your codebase directory for Claude to work with
+      - ${PWD}:/workspace
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
